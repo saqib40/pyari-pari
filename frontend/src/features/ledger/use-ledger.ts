@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { formatDayLabel } from '@/lib/format';
 import { fetchLedgerEntries } from '@/services/ledger-service';
-import type { EntryStatus, LedgerEntry, LedgerSummary } from '@/types/ledger';
+import type { LedgerEntry, LedgerSummary } from '@/types/ledger';
 
 export const ledgerKeys = {
   all: ['ledger'] as const,
@@ -16,7 +16,7 @@ export function useLedgerEntries() {
   });
 }
 
-export type LedgerFilter = 'all' | Exclude<EntryStatus, 'unconfirmed'>;
+export type LedgerFilter = 'all' | 'open' | 'closed';
 
 export type LedgerSection = {
   title: string;

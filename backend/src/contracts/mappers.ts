@@ -1,7 +1,7 @@
-import type { Customer, Payment, PaymentLink } from "../db/types.js";
-import type { EntryWithCustomer } from "../ledger/repository.js";
+import type { Customer, Merchant, Payment, PaymentLink } from "../db/types.js";
+import type { EntryHistory, EntryWithCustomer } from "../ledger/repository.js";
 import { toRupees } from "../ledger/state.js";
-import type { CustomerDto, EntryDto, LinkDto, PaymentDto } from "./index.js";
+import type { CustomerDto, EntryDto, LedgerEntryDto, LinkDto, MerchantDto, PaymentDto } from "./index.js";
 
 const iso = (d: Date | string) => (d instanceof Date ? d.toISOString() : new Date(d).toISOString());
 
@@ -25,6 +25,14 @@ export function toEntryDto(e: EntryWithCustomer): EntryDto {
   };
 }
 
+export function toLedgerEntryDto(e: EntryWithCustomer, history: EntryHistory): LedgerEntryDto {
+  return {
+    ...toEntryDto(e),
+    link: history.link ? toLinkDto(history.link) : null,
+    payments: history.payments.map(toPaymentDto),
+  };
+}
+
 export function toLinkDto(l: PaymentLink): LinkDto {
   return {
     id: l.id,
@@ -34,6 +42,7 @@ export function toLinkDto(l: PaymentLink): LinkDto {
     shortUrl: l.short_url,
     phone: l.phone,
     status: l.status,
+    createdAt: iso(l.created_at),
   };
 }
 
@@ -48,5 +57,14 @@ export function toPaymentDto(p: Payment): PaymentDto {
     entryId: p.entry_id,
     matchStatus: p.match_status,
     createdAt: iso(p.created_at),
+  };
+}
+
+export function toMerchantDto(m: Merchant, upiId: string | undefined): MerchantDto {
+  return {
+    id: m.id,
+    name: m.name,
+    upiId: upiId ?? null,
+    qrPayload: upiId ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(m.name)}&cu=INR` : m.name,
   };
 }

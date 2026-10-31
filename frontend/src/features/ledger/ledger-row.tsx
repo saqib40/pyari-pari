@@ -1,8 +1,11 @@
-import { StyleSheet, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/components/ui/app-text';
 import { Icon, type IconName } from '@/components/ui/icon';
+import { env } from '@/config/env';
 import { formatMoney, formatTime } from '@/lib/format';
+import { simulateLinkPaid } from '@/services/demo-service';
 import type { LedgerEntry } from '@/types/ledger';
 import { colors, radii, spacing } from '@/theme';
 
@@ -34,8 +37,20 @@ export function LedgerRow({ entry, first, last }: LedgerRowProps) {
   const open = entry.status === 'open';
   const { icon, text } = describe(entry);
 
+  // Demo only: the customer pays the link, and Pari announces it like a real payment.
+  const payLink =
+    env.demoTools && open && entry.link?.status === 'sent'
+      ? () => {
+          if (process.env.EXPO_OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          simulateLinkPaid(entry.id).catch(() => {});
+        }
+      : undefined;
+
   return (
-    <View style={[styles.row, first && styles.first, last && styles.last]}>
+    <Pressable
+      onLongPress={payLink}
+      disabled={!payLink}
+      style={[styles.row, first && styles.first, last && styles.last]}>
       <Avatar name={entry.customer.name} size={AVATAR} />
       <View style={styles.body}>
         <AppText variant="bodyStrong" numberOfLines={1}>
@@ -57,7 +72,7 @@ export function LedgerRow({ entry, first, last }: LedgerRowProps) {
         </AppText>
       </View>
       {last ? null : <View style={styles.divider} />}
-    </View>
+    </Pressable>
   );
 }
 

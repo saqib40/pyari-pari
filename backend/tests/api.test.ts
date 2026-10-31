@@ -3,6 +3,8 @@ import { SarvamAIError } from "sarvamai";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadEnv } from "../src/config/env.js";
+import { toMerchantDto } from "../src/contracts/mappers.js";
+import { seedDemoHistory } from "../src/db/seed.js";
 import { generateSignature } from "../src/paytm/checksum.js";
 import { SandboxPaytmClient } from "../src/paytm/sandbox.client.js";
 import { mapSarvamError } from "../src/sarvam/client.js";
@@ -50,14 +52,25 @@ describe("basics", () => {
     expect(res.body.error).toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("allows the dev frontend origin", async () => {
-    const res = await api().options("/api/entries").set("Origin", "http://localhost:5173").set("Access-Control-Request-Method", "GET");
-    expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+  it("allows the dev frontend origins", async () => {
+    for (const origin of ["http://localhost:5173", "http://localhost:8081"]) {
+      const res = await api().options("/api/entries").set("Origin", origin).set("Access-Control-Request-Method", "GET");
+      expect(res.headers["access-control-allow-origin"]).toBe(origin);
+    }
+  });
+
+  it("describes the shop and what its QR carries", async () => {
+    const res = await api().get("/api/me").set(auth).expect(200);
+    expect(res.body).toMatchObject({ name: "Sharma General Store", upiId: null, qrPayload: "Sharma General Store" });
+
+    const withUpi = toMerchantDto({ id: "m1", name: "Sharma General Store", api_key_hash: "", created_at: new Date() }, "sharma@paytm");
+    expect(withUpi.qrPayload).toBe("upi://pay?pa=sharma@paytm&pn=Sharma%20General%20Store&cu=INR");
   });
 
   it("streams TTS audio and reports per-stage timings on converse", async () => {
     const audio = await api().get("/api/tts/stream").query({ text: "सेव हो गया।", key: API_KEY }).buffer(true).expect(200);
     expect(audio.headers["content-type"]).toContain("audio/wav");
+    expect(audio.headers["cross-origin-resource-policy"]).toBe("cross-origin");
     expect(audio.body.toString()).toContain("RIFF-fake");
     await api().get("/api/tts/stream").set(auth).expect(400);
 
@@ -150,6 +163,25 @@ describe("collect + paytm callback", () => {
     expect(dup.body.outcome).toBe("duplicate");
   });
 
+  it("lists each entry with its latest link and the payments matched to it", async () => {
+    const paidId = await confirmedEntry(DECK);
+    await api().post(`/api/entries/${paidId}/collect`).set(auth).send({ phone: "98765 43210" }).expect(201);
+    await api().post("/api/dev/simulate/link-paid").set(auth).send({ entryId: paidId }).expect(200);
+    const openId = await confirmedEntry(DECK);
+
+    const { body } = await api().get("/api/entries").set(auth).expect(200);
+    const paid = body.entries.find((e: { id: string }) => e.id === paidId);
+    expect(paid).toMatchObject({
+      status: "CLOSED",
+      link: { status: "PAID", amountRupees: 150, createdAt: expect.any(String) },
+      payments: [{ source: "LINK", amountRupees: 150, matchStatus: "MATCHED" }],
+    });
+    expect(body.entries.find((e: { id: string }) => e.id === openId)).toMatchObject({ status: "OPEN", link: null, payments: [] });
+
+    const single = await api().get(`/api/entries/${paidId}`).set(auth).expect(200);
+    expect(single.body.entry.payments).toHaveLength(1);
+  });
+
   it("ignores failed transactions", async () => {
     const res = await api().post("/api/paytm/callback").type("form").send({ ORDERID: "X", TXNID: "T9", TXNAMOUNT: "1", STATUS: "TXN_FAILURE" });
     expect(res.body.outcome).toBe("ignored");
@@ -202,6 +234,27 @@ describe("part payments and QR fallback", () => {
   it("QR with no plausible entry is UNMATCHED, never auto-matched", async () => {
     const res = await api().post("/api/dev/simulate/qr").set(auth).send({ amountRupees: 99999 }).expect(201);
     expect(res.body.suggestion).toMatchObject({ candidates: [], payment: { matchStatus: "UNMATCHED" } });
+  });
+});
+
+describe("demo history seed", () => {
+  it("gives a fresh merchant a few past entries, once", async () => {
+    const fresh = await createTestContext();
+    try {
+      expect(await seedDemoHistory(fresh.ctx.db, fresh.merchantId)).toBe(true);
+      expect(await seedDemoHistory(fresh.ctx.db, fresh.merchantId)).toBe(false);
+
+      const { body } = await request(fresh.app).get("/api/entries").set(auth).expect(200);
+      const byName = Object.fromEntries(body.entries.map((e: { customer: { name: string } }) => [e.customer.name, e]));
+      expect(body.entries).toHaveLength(4);
+      expect(byName["Ramesh bhai"]).toMatchObject({ status: "OPEN", pendingRupees: 400, link: null });
+      expect(byName["Sunita didi"]).toMatchObject({ status: "OPEN", pendingRupees: 1200, link: { status: "ACTIVE", amountRupees: 1200 } });
+      expect(byName["Anil bhai"]).toMatchObject({ status: "CLOSED", payments: [{ source: "LINK", amountRupees: 650 }] });
+      expect(byName["Kavita ji"]).toMatchObject({ status: "CLOSED", payments: [{ source: "QR", amountRupees: 420 }] });
+      expect(Date.parse(byName["Ramesh bhai"].createdAt)).toBeLessThan(Date.now() - 23 * 3_600_000);
+    } finally {
+      await fresh.close();
+    }
   });
 });
 

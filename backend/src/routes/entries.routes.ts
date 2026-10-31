@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { CollectBody, ConfirmBody, ListEntriesQuery, PatchEntryBody, type BalanceResponse } from "../contracts/index.js";
-import { toCustomerDto, toEntryDto } from "../contracts/mappers.js";
+import { toCustomerDto, toEntryDto, toLedgerEntryDto } from "../contracts/mappers.js";
 import type { AppContext } from "../context.js";
 import { merchantId } from "../helpers/auth.js";
 import { AppError } from "../helpers/errors.js";
@@ -9,6 +9,7 @@ import { detectYesNo } from "../llm/intent.js";
 import {
   confirmEntry,
   customerBalancePaise,
+  entryHistory,
   findOrCreateCustomer,
   getCustomer,
   getEntry,
@@ -23,13 +24,18 @@ export function entriesRoutes(ctx: AppContext): Router {
   const router = Router();
 
   router.get("/entries", async (req, res) => {
+    const mid = merchantId(req);
     const q = ListEntriesQuery.parse(req.query);
-    const entries = await listEntries(ctx.db, merchantId(req), q);
-    res.json({ entries: entries.map(toEntryDto) });
+    const entries = await listEntries(ctx.db, mid, q);
+    const history = await entryHistory(ctx.db, mid, entries.map((e) => e.id));
+    res.json({ entries: entries.map((e) => toLedgerEntryDto(e, history.get(e.id)!)) });
   });
 
   router.get("/entries/:id", async (req, res) => {
-    res.json({ entry: toEntryDto(await getEntry(ctx.db, merchantId(req), req.params.id)) });
+    const mid = merchantId(req);
+    const entry = await getEntry(ctx.db, mid, req.params.id);
+    const history = await entryHistory(ctx.db, mid, [entry.id]);
+    res.json({ entry: toLedgerEntryDto(entry, history.get(entry.id)!) });
   });
 
   router.patch("/entries/:id", async (req, res) => {

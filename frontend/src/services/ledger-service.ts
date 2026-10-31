@@ -1,50 +1,59 @@
-import { env } from '@/config/env';
-import { mockDb, mockLatency } from '@/mocks/db';
-import type { LedgerEntry } from '@/types/ledger';
+import type { EntryDto, EntryStatusDto, LedgerEntryDto, LinkDto } from '@/types/api';
+import type { EntryStatus, LedgerEntry, Payment, PaymentLink } from '@/types/ledger';
 
 import { api } from './api-client';
 
-/** Confirmed entries only; drafts waiting for a yes are never listed. */
+export const toPaise = (rupees: number) => Math.round(rupees * 100);
+
+const STATUS: Record<EntryStatusDto, EntryStatus> = {
+  UNCONFIRMED: 'unconfirmed',
+  OPEN: 'open',
+  CLOSED: 'closed',
+  REJECTED: 'rejected',
+};
+
+/** Only a link that is still waiting or got paid says anything about the entry. */
+export function toPaymentLink(link: LinkDto): PaymentLink | undefined {
+  if (link.status !== 'ACTIVE' && link.status !== 'PAID') return undefined;
+  return {
+    amount: toPaise(link.amountRupees),
+    phone: link.phone,
+    status: link.status === 'PAID' ? 'paid' : 'sent',
+    sentAt: link.createdAt,
+  };
+}
+
+/** Without history (a conversation turn), the entry shows only what was paid when it was spoken. */
+export function toLedgerEntry(dto: EntryDto | LedgerEntryDto): LedgerEntry {
+  const later: Payment[] =
+    'payments' in dto
+      ? dto.payments.map((p) => ({
+          amount: toPaise(p.amountRupees),
+          method: p.source === 'LINK' ? 'link' : 'qr',
+          at: p.createdAt,
+        }))
+      : [];
+  const paid = toPaise(dto.paidRupees);
+  const atCounter = Math.max(0, paid - later.reduce((sum, p) => sum + p.amount, 0));
+  const link = 'link' in dto && dto.link ? toPaymentLink(dto.link) : undefined;
+
+  return {
+    id: dto.id,
+    customer: { id: dto.customer.id, name: dto.customer.name, phone: dto.customer.phone ?? undefined },
+    total: toPaise(dto.totalRupees),
+    paid,
+    pending: toPaise(dto.pendingRupees),
+    status: STATUS[dto.status],
+    needsReview: dto.needsReview,
+    payments: [...(atCounter > 0 ? [{ amount: atCounter, method: 'counter' as const, at: dto.createdAt }] : []), ...later],
+    link,
+    createdAt: dto.createdAt,
+    closedAt: dto.status === 'CLOSED' ? dto.updatedAt : undefined,
+  };
+}
+
+/** Everything the merchant has said yes to; drafts and cancelled entries are left out. */
 export async function fetchLedgerEntries(signal?: AbortSignal): Promise<LedgerEntry[]> {
-  if (env.useMocks) {
-    return mockLatency(mockDb.entries());
-  }
-  return api.get<LedgerEntry[]>('/ledger/entries', signal);
-}
-
-/** The merchant said yes, so the draft becomes a real entry. */
-export async function confirmEntry(id: string): Promise<LedgerEntry> {
-  if (env.useMocks) {
-    return mockLatency(mockDb.confirmEntry(id), 350);
-  }
-  return api.post<LedgerEntry>(`/ledger/entries/${id}/confirm`);
-}
-
-export async function discardEntry(id: string): Promise<void> {
-  if (env.useMocks) {
-    return mockLatency(mockDb.discardEntry(id), 200);
-  }
-  return api.delete<void>(`/ledger/entries/${id}`);
-}
-
-/**
- * Texts the customer a payment link for what they still owe. `phone` is only
- * needed the first time; the backend remembers it for that customer.
- */
-export async function sendPaymentLink(id: string, phone?: string): Promise<LedgerEntry> {
-  if (env.useMocks) {
-    return mockLatency(mockDb.sendPaymentLink(id, phone), 700);
-  }
-  return api.post<LedgerEntry>(`/ledger/entries/${id}/payment-link`, { phone });
-}
-
-/**
- * The merchant will collect at the counter instead of sending a link. The
- * backend doesn't need to know yet; the mock uses it to have the customer pay
- * on the shop's QR a few seconds later.
- */
-export async function skipPaymentLink(id: string): Promise<void> {
-  if (env.useMocks) {
-    return mockLatency(mockDb.skipPaymentLink(id), 0);
-  }
+  const { entries } = await api.get<{ entries: LedgerEntryDto[] }>('/entries?limit=200', signal);
+  return entries.filter((e) => e.status === 'OPEN' || e.status === 'CLOSED').map(toLedgerEntry);
 }

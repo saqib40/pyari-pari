@@ -1,6 +1,6 @@
 import { sql, type Kysely, type Transaction } from "kysely";
 import { AppError, notFound } from "../helpers/errors.js";
-import type { Actor, Customer, DB, EntryStatus, LedgerEntry } from "../db/types.js";
+import type { Actor, Customer, DB, EntryStatus, LedgerEntry, Payment, PaymentLink } from "../db/types.js";
 import { isCloseName, normalizeName } from "./names.js";
 import { assertTransition } from "./state.js";
 
@@ -156,6 +156,31 @@ export async function listEntries(
   if (filter.status) q = q.where("e.status", "=", filter.status);
   if (filter.customerId) q = q.where("e.customer_id", "=", filter.customerId);
   return q.orderBy("e.created_at", "desc").limit(filter.limit ?? 50).execute();
+}
+
+export interface EntryHistory {
+  link: PaymentLink | null;
+  payments: Payment[];
+}
+
+/** The latest payment link and the matched payments of each entry, in two queries. */
+export async function entryHistory(db: Db, merchantId: string, entryIds: string[]): Promise<Map<string, EntryHistory>> {
+  const history = new Map<string, EntryHistory>(entryIds.map((id) => [id, { link: null, payments: [] }]));
+  if (entryIds.length === 0) return history;
+  const [links, payments] = await Promise.all([
+    db.selectFrom("payment_links").selectAll().where("entry_id", "in", entryIds).orderBy("created_at", "asc").execute(),
+    db
+      .selectFrom("payments")
+      .selectAll()
+      .where("merchant_id", "=", merchantId)
+      .where("entry_id", "in", entryIds)
+      .where("match_status", "=", "MATCHED")
+      .orderBy("created_at", "asc")
+      .execute(),
+  ]);
+  for (const link of links) history.get(link.entry_id)!.link = link;
+  for (const payment of payments) history.get(payment.entry_id!)!.payments.push(payment);
+  return history;
 }
 
 export interface Amounts {

@@ -230,13 +230,14 @@ All `/api` endpoints (except the signature-verified Paytm webhook) require the `
 | `POST` | `/api/converse/reset` | Resets active conversation to `IDLE`. |
 | `GET` | `/api/events` | Server-Sent Events (SSE) stream for real-time notifications (`entry.updated`, `payment.received`, `pari.prompt`, `pari.announce`). |
 | `POST` | `/api/voice/entry` | Stateless single-shot audio/text entry extraction and readback. |
-| `GET` | `/api/entries` | Lists ledger entries with optional status and customer filters. |
+| `GET` | `/api/me` | The shop's name, UPI ID and QR payload (`upi://pay?...` when `PARI_UPI_ID` is set). |
+| `GET` | `/api/entries` | Lists ledger entries with optional status and customer filters, each with its latest payment link and matched payments. |
 | `PATCH` | `/api/entries/:id` | Corrects an entry's amounts or customer name. |
 | `POST` | `/api/entries/:id/confirm` | Confirms (`"yes"`) or rejects (`"no"`) an entry via JSON or audio. |
 | `POST` | `/api/entries/:id/collect` | Dispatches a Paytm payment link to the customer's phone. |
 | `GET` | `/api/customers/:id/balance` | Returns aggregate pending balance and list of open entries. |
 | `GET` | `/api/payments/suggestions` | Retrieves outstanding QR payments awaiting confirmation. |
-| `POST` | `/api/payments/:id/match` | Matches or rejects a suggested payment against an entry. |
+| `POST` | `/api/payments/:id/match` | Matches or rejects a suggested payment against an entry, and drops Pari's spoken question about it. |
 | `GET` | `/api/tts/stream?text=` | Low-latency audio streaming of Bulbul WAV synthesis. |
 | `POST` | `/api/paytm/callback` | Paytm status callback (checksum verified, public webhook). |
 | `GET` | `/health` | Healthcheck reporting database status, Paytm mode, and Sarvam connectivity. |
@@ -310,6 +311,39 @@ npm run build
 
 ---
 
-## 10. License & Credits
+## 10. Mobile App & Demo
+
+The Expo app in [`frontend/`](frontend) (Pyari Pari) is a thin client of the conversation engine. It records the merchant, sends the clip to `POST /api/converse`, shows and speaks Pari's reply, and follows `/api/events` for payments. [`frontend/README.md`](frontend/README.md) covers development in the browser.
+
+### Demo setup (Android phone over USB)
+
+```bash
+cd backend && npm install && cp .env.example .env   # set SARVAM_API_KEY; PARI_DEMO_SEED=true adds a few days of history
+npm run dev                                          # not "npm run pari": the CLI would also listen on the laptop mic
+adb reverse tcp:4000 tcp:4000                        # the phone's localhost:4000 reaches the laptop's backend
+adb reverse tcp:8081 tcp:8081                        # only for a debug build served by Metro
+cd ../frontend && npm install
+cp .env.example .env.local                           # set EXPO_PUBLIC_DEMO_TOOLS=true
+npx expo run:android                                 # or --variant release for a faster, Metro-free build
+```
+
+* Sarvam needs internet, so keep a phone hotspot as a backup. Check the Sarvam credits beforehand; the backend returns 402 when they run out.
+* For a fresh start, stop the backend and delete `backend/.data/pglite`. Pari only asks for a customer's number until it has one.
+
+### Demo script (about 3 minutes)
+
+1. **Speak.** Tap the sky and say *"Gupta ji ne 350 ka samaan liya, 200 UPI diya, 150 baaki."*
+2. **Extract and confirm.** The breakdown shows ₹350, ₹200 and ₹150, and Pari says *"Gupta ji, total ₹350, ₹200 mile, ₹150 baaki. Save karoon?"* Answer "Haan".
+3. **Collect.** Pari: *"Save ho gaya. ₹150 ka payment link bhejun?"* Answer "Haan", give the number (*"98765 43210"*), and answer "Haan" to *"98765 43210. Sahi hai?"* Pari: *"Link bhej diya…"* (the mock Paytm logs the SMS).
+4. **Close by link.** On the Ledger, Gupta ji shows "Link sent". Long-press the row: Pari announces *"Gupta ji ne ₹150 de diye. Khaata band."* and the row flips to "Closed by link".
+5. **Reconcile a QR payment.** Say *"Verma ji ne 500 ka saamaan liya, 300 diye"*, answer "Haan", then "Abhi nahi". On the QR tab, long-press the code. Pari asks *"₹200 aaya, Verma ji ka?"* aloud and on the card. Answer "Haan" and the entry closes.
+6. **Guardrail.** During a read-back, say *"Nahi, 250 diye"*: Pari corrects the entry, and nothing is saved without a "haan".
+7. **Finish on the Ledger** with "To collect" and "Collected today".
+
+In a noisy room, the buttons drive the same conversation as the voice. The Paytm sandbox is optional (see [`backend/README.md`](backend/README.md)); the demo uses simulated payments.
+
+---
+
+## 11. License & Credits
 
 Built for Kirana store empowerment across India. Developed with Express, TypeScript, Sarvam AI, and Paytm.

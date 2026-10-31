@@ -107,6 +107,7 @@ export interface LinkDto {
   shortUrl: string | null;
   phone: string;
   status: "ACTIVE" | "PAID" | "EXPIRED" | "FAILED";
+  createdAt: string;
 }
 
 export interface PaymentDto {
@@ -119,6 +120,12 @@ export interface PaymentDto {
   entryId: string | null;
   matchStatus: "MATCHED" | "SUGGESTED" | "UNMATCHED" | "REJECTED";
   createdAt: string;
+}
+
+/** An entry as the ledger lists it: with its latest payment link and the payments matched to it. */
+export interface LedgerEntryDto extends EntryDto {
+  link: LinkDto | null;
+  payments: PaymentDto[];
 }
 
 export interface CandidateDto {
@@ -153,6 +160,15 @@ export interface VoiceEntryResponse {
   readbackAudio?: string;
   needsReview: boolean;
   unverifiedFields: string[];
+}
+
+export interface MerchantDto {
+  id: string;
+  name: string;
+  /** null until PARI_UPI_ID is set. */
+  upiId: string | null;
+  /** What the shop QR encodes: a UPI payment intent when upiId is set, otherwise just the shop name. */
+  qrPayload: string;
 }
 
 export interface SttResponse {

@@ -15,29 +15,27 @@ import { SkyOrb } from '@/components/sky/sky-orb';
 import { AppText } from '@/components/ui/app-text';
 import type { IconName } from '@/components/ui/icon';
 import { PillButton } from '@/components/ui/pill-button';
-import { useLedgerEntries } from '@/features/ledger/use-ledger';
 import { formatMoney, formatPhone } from '@/lib/format';
 import { useContentWidth } from '@/lib/use-content-width';
-import type { ListenFor } from '@/types/assistant';
-import type { LedgerEntry, PaymentMethod } from '@/types/ledger';
+import type { ConversationState } from '@/types/api';
+import type { LedgerEntry, PaymentLink } from '@/types/ledger';
 import { colors, screenPadding, spacing, springs } from '@/theme';
 
-import { useVoiceAssistant, type Outcome, type Step } from './use-voice-assistant';
+import type { Turn } from './conversation-store';
+import { useVoiceAssistant, type Notice } from './use-voice-assistant';
 
-const LISTEN_HINT: Record<ListenFor, string> = {
-  entry: 'Who bought what, and how much they paid.',
-  phone: 'Say the ten digits.',
-  answer: 'Haan ya nahi?',
-};
-
-const METHOD_LABEL: Record<PaymentMethod, string> = {
-  cash: 'cash',
-  upi: 'UPI',
-  link: 'by link',
-  qr: 'on QR',
+const LISTEN_HINT: Record<ConversationState, string> = {
+  IDLE: 'Who bought what, and how much they paid.',
+  AWAITING_ENTRY_CONFIRM: 'Haan, nahi, or what to change.',
+  AWAITING_COLLECT_CHOICE: 'Haan ya nahi?',
+  AWAITING_PHONE: 'Say the ten digits.',
+  AWAITING_PHONE_CONFIRM: 'Haan ya nahi?',
+  AWAITING_QR_MATCH: 'Haan ya nahi?',
 };
 
 const VOICE_ANSWER = 'Or tap the sky and say “haan”';
+/** Longer lines get a smaller headline so they still fit. */
+const LONG_LINE = 64;
 
 type Action = {
   label: string;
@@ -46,29 +44,36 @@ type Action = {
   onPress: () => void;
 };
 
-/** What the conversation area shows for a step: Pari's line, a detail, and the replies. */
+/** What the conversation area shows: Pari's line, a detail, and the replies. */
 type Scene = {
   key: string;
   headline: string;
   body?: string;
-  /** The body is the merchant's own words as they are heard. */
-  live?: boolean;
+  /** The body says what went wrong rather than what the merchant said. */
+  alert?: boolean;
   note?: string;
+  /** Pari wasn't sure she heard the amounts right. */
+  flagged?: boolean;
   actions?: Action[];
   footnote?: string;
 };
 
-function readBack(draft: LedgerEntry) {
-  const name = draft.customer.name;
-  return draft.pending > 0
-    ? `${name}, ${formatMoney(draft.pending)} baaki.\nSave karoon?`
-    : `${name}, ${formatMoney(draft.total)} poore mile.\nSave karoon?`;
+/** "…150 baaki. Save karoon?" puts the question on its own line. */
+function breakBeforeQuestion(text: string) {
+  return text.replace(/\. (?=[^.]*\?( \([^)]*\))?$)/, '.\n');
 }
 
-function breakdown(draft: LedgerEntry) {
-  const method = draft.payments[0]?.method;
-  const paid = method ? `Paid ${formatMoney(draft.paid)} ${METHOD_LABEL[method]}` : 'Nothing paid';
-  return `Total ${formatMoney(draft.total)} · ${paid} · Baaki ${formatMoney(draft.pending)}`;
+function breakdown(entry: LedgerEntry) {
+  return `Total ${formatMoney(entry.total)} · Paid ${formatMoney(entry.paid)} · Baaki ${formatMoney(entry.pending)}`;
+}
+
+function linkOffer(entry?: LedgerEntry) {
+  const phone = entry?.customer.phone;
+  return phone ? `Paytm payment link by SMS to ${formatPhone(phone)}` : 'Paytm payment link by SMS';
+}
+
+function linkSent(link: PaymentLink) {
+  return `Sent to ${formatPhone(link.phone)}. The entry closes itself once it’s paid.`;
 }
 
 const viewLedger: Action = {
@@ -77,14 +82,77 @@ const viewLedger: Action = {
   onPress: () => router.navigate('/ledger'),
 };
 
+function turnScene(turn: Turn, answer: (text: 'haan' | 'nahi') => void): Scene {
+  if (!turn.reply) {
+    return {
+      key: 'start',
+      headline: 'Tap the sky and speak',
+      body: '“Gupta ji ne 350 ka samaan liya, 200 UPI diya, 150 baaki”',
+    };
+  }
+
+  const yes = (label: string, icon: IconName = 'check'): Action => ({
+    label,
+    icon,
+    tone: 'accent',
+    onPress: () => answer('haan'),
+  });
+  const no = (label: string): Action => ({ label, onPress: () => answer('nahi') });
+  const said = {
+    key: `turn-${turn.id}`,
+    headline: breakBeforeQuestion(turn.reply.text),
+    body: turn.transcript ? `“${turn.transcript}”` : undefined,
+  };
+
+  switch (turn.state) {
+    case 'AWAITING_ENTRY_CONFIRM':
+      return {
+        ...said,
+        note: turn.entry && breakdown(turn.entry),
+        flagged: turn.needsReview,
+        actions: [yes('Haan, save karo'), no('Nahi')],
+        footnote: VOICE_ANSWER,
+      };
+    case 'AWAITING_COLLECT_CHOICE':
+      return {
+        ...said,
+        note: linkOffer(turn.entry),
+        actions: [yes('Link bhejo', 'link'), no('Abhi nahi')],
+        footnote: VOICE_ANSWER,
+      };
+    case 'AWAITING_PHONE':
+      return { ...said, actions: [no('Rehne do')], footnote: 'Tap the sky and say the number.' };
+    case 'AWAITING_PHONE_CONFIRM':
+      return { ...said, actions: [yes('Haan'), no('Nahi')], footnote: VOICE_ANSWER };
+    case 'AWAITING_QR_MATCH':
+      return {
+        ...said,
+        note: 'Paid to your shop QR',
+        actions: [yes('Haan'), no('Nahi')],
+        footnote: VOICE_ANSWER,
+      };
+    case 'IDLE':
+      return {
+        ...said,
+        note: turn.link?.status === 'sent' ? linkSent(turn.link) : undefined,
+        actions: turn.entry && turn.entry.status !== 'rejected' ? [viewLedger] : undefined,
+      };
+  }
+}
+
+/** An open question stays on screen, with the problem in place of the merchant's words. */
+function withNotice(scene: Scene, notice: Notice | null, waiting: boolean): Scene {
+  if (!notice) return scene;
+  if (waiting) return { ...scene, key: `${scene.key}-notice`, body: notice.title, alert: true };
+  return { key: 'notice', headline: notice.title, body: notice.detail };
+}
+
 export function ListeningScreen() {
   const insets = useSafeAreaInsets();
   const tabBarInset = useTabBarInset();
   const width = useContentWidth();
   const { height } = useWindowDimensions();
-  const assistant = useVoiceAssistant();
-  const { step, transcript, level, energy, tapOrb } = assistant;
-  const { data: entries } = useLedgerEntries();
+  const { turn, phase, notice, level, energy, tapOrb, answer } = useVoiceAssistant();
 
   const orbSize = Math.round(Math.min(width * 0.72, height * 0.32, 340));
 
@@ -98,111 +166,18 @@ export function ListeningScreen() {
     tapOrb();
   };
 
-  const doneScene = (outcome: Outcome): Scene => {
-    switch (outcome.kind) {
-      case 'linkSent': {
-        const { customer, link } = outcome.entry;
-        const live = entries?.find((entry) => entry.id === outcome.entry.id);
-        return live?.status === 'closed'
-          ? {
-              key: 'link-paid',
-              headline: `${customer.name} ke ${formatMoney(link?.amount ?? 0)} aa gaye.`,
-              body: 'Paid by link, so the entry closed itself.',
-              actions: [viewLedger],
-            }
-          : {
-              key: 'link-sent',
-              headline: 'Link bhej diya.',
-              body: `The entry closes by itself when ${customer.name} pays.`,
-              actions: [viewLedger],
-            };
-      }
-      case 'saved':
-        return outcome.entry.pending > 0
-          ? {
-              key: 'saved-open',
-              headline: `Theek hai, ${formatMoney(outcome.entry.pending)} baaki likh liya.`,
-              body: `If ${outcome.entry.customer.name} pays on your QR, I’ll ask you to match it.`,
-              actions: [viewLedger],
-            }
-          : { key: 'saved-closed', headline: 'Save ho gaya. Hisaab barabar.', actions: [viewLedger] };
-      case 'discarded':
-        return { key: 'discarded', headline: 'Theek hai, save nahi kiya.', body: 'Tap the sky to try again.' };
-      case 'unheard':
-        return { key: 'unheard', headline: 'Kuch sunai nahi diya.', body: 'Tap the sky and try again.' };
-      case 'unclear':
-        return { key: 'unclear', headline: 'Samajh nahi aaya.', body: LISTEN_HINT.entry };
-    }
-  };
-
-  const sceneFor = (current: Step): Scene => {
-    switch (current.kind) {
-      case 'idle':
-        return {
-          key: 'idle',
-          headline: 'Tap the sky and speak',
-          body: '“Gupta ji ne 350 ka samaan liya, 200 UPI diya, 150 baaki”',
-        };
-      case 'listening':
-        return {
-          key: 'listening',
-          headline: 'Listening…',
-          body: transcript || LISTEN_HINT[current.listenFor],
-          live: Boolean(transcript),
-        };
-      case 'thinking':
-        return { key: 'thinking', headline: 'Thinking…', body: transcript };
-      case 'working':
-        return { key: 'working', headline: current.label };
-      case 'confirm': {
-        const { draft } = current;
-        return {
-          key: `confirm-${draft.id}`,
-          headline: readBack(draft),
-          note: breakdown(draft),
-          actions: [
-            { label: 'Haan, save karo', icon: 'check', tone: 'accent', onPress: () => void assistant.confirm(draft) },
-            { label: 'Nahi', onPress: () => assistant.reject(draft) },
-          ],
-          footnote: VOICE_ANSWER,
-        };
-      }
-      case 'collect': {
-        const { entry } = current;
-        const phone = current.phone ?? entry.customer.phone;
-        const skip: Action = { label: 'Abhi nahi', onPress: () => assistant.skipLink(entry) };
-        return phone
-          ? {
-              key: `collect-${entry.id}`,
-              headline: `${entry.customer.name} ko\n${formatMoney(entry.pending)} ka link bhejoon?`,
-              note: `Paytm payment link by SMS to ${formatPhone(phone)}`,
-              actions: [
-                {
-                  label: 'Link bhejo',
-                  icon: 'link',
-                  tone: 'accent',
-                  onPress: () => void assistant.sendLink(entry, current.phone),
-                },
-                skip,
-              ],
-              footnote: VOICE_ANSWER,
-            }
-          : {
-              key: `phone-${entry.id}`,
-              headline: `${entry.customer.name} ka number?`,
-              body: 'Tap the sky and say it. You only need to do this once.',
-              actions: [skip],
-            };
-      }
-      case 'done':
-        return doneScene(current.outcome);
-      case 'error':
-        return { key: 'error', headline: 'That didn’t work', body: 'Tap the sky to try again.' };
-    }
-  };
-
-  const scene = sceneFor(step);
-  const busy = step.kind === 'thinking' || step.kind === 'working';
+  const waiting = turn.state !== 'IDLE';
+  const scene: Scene =
+    phase === 'recording'
+      ? { key: 'recording', headline: 'Sun rahi hoon…', body: LISTEN_HINT[turn.state] }
+      : phase === 'transcribing'
+        ? { key: 'transcribing', headline: 'Soch rahi hoon…' }
+        : withNotice(
+            turnScene(turn, (text) => void answer(text)),
+            notice,
+            waiting,
+          );
+  const busy = phase === 'transcribing' || phase === 'answering';
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + spacing.sm, paddingBottom: tabBarInset }]}>
@@ -218,11 +193,7 @@ export function ListeningScreen() {
           disabled={busy}
           role="button"
           accessibilityLabel={
-            step.kind === 'listening'
-              ? 'Stop listening'
-              : step.kind === 'confirm' || step.kind === 'collect'
-                ? 'Answer by voice'
-                : 'Speak an entry'
+            phase === 'recording' ? 'Stop listening' : waiting ? 'Answer by voice' : 'Speak an entry'
           }>
           <Animated.View style={pressStyle}>
             <SkyOrb size={orbSize} energy={energy} level={level} glow={0.1} ripples />
@@ -230,30 +201,34 @@ export function ListeningScreen() {
         </Pressable>
 
         <View style={[styles.conversation, { marginTop: Math.round(orbSize * 0.17) }]}>
-          <SceneView key={scene.key} scene={scene} />
+          <SceneView key={scene.key} scene={scene} disabled={busy} />
         </View>
       </View>
     </View>
   );
 }
 
-function SceneView({ scene }: { scene: Scene }) {
+function SceneView({ scene, disabled }: { scene: Scene; disabled: boolean }) {
   return (
     <Animated.View entering={FadeIn.duration(400)} exiting={FadeOut.duration(150)} style={styles.block}>
-      <AppText variant="headline" align="center" numberOfLines={3}>
+      <AppText
+        variant="headline"
+        align="center"
+        numberOfLines={4}
+        style={scene.headline.length > LONG_LINE && styles.longHeadline}>
         {scene.headline}
       </AppText>
       {scene.body ? (
         <AppText
           variant="body"
           align="center"
-          numberOfLines={3}
-          color={scene.live ? colors.text : colors.textSecondary}>
+          numberOfLines={2}
+          color={scene.alert ? colors.text : colors.textSecondary}>
           {scene.body}
         </AppText>
       ) : null}
       {scene.note ? (
-        <AppText variant="caption" align="center">
+        <AppText variant="caption" align="center" color={scene.flagged ? colors.due : undefined}>
           {scene.note}
         </AppText>
       ) : null}
@@ -265,6 +240,7 @@ function SceneView({ scene }: { scene: Scene }) {
               label={action.label}
               icon={action.icon}
               tone={action.tone}
+              disabled={disabled}
               onPress={action.onPress}
             />
           ))}
@@ -306,6 +282,10 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
     gap: spacing.sm,
+  },
+  longHeadline: {
+    fontSize: 24,
+    lineHeight: 30,
   },
   actions: {
     flexDirection: 'row',

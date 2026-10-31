@@ -97,6 +97,17 @@ export class ConversationEngine {
     return this.getSession(merchantId);
   }
 
+  /** The merchant settled this payment by tap, so a pending spoken question about it is dropped. */
+  releasePayment(merchantId: string, paymentId: string): Promise<void> {
+    return this.withLock(merchantId, async () => {
+      const session = this.sessions.get(merchantId);
+      if (session?.state === "AWAITING_QR_MATCH" && session.qr?.paymentId === paymentId) {
+        this.toIdle(session);
+        session.updatedAt = Date.now();
+      }
+    });
+  }
+
   handle(merchantId: string, text: string): Promise<TurnResult> {
     return this.withLock(merchantId, async () => {
       const session = this.getSession(merchantId);

@@ -3,7 +3,7 @@ import { loadEnv } from "./config/env.js";
 import { createContext } from "./context.js";
 import { openDatabase } from "./db/client.js";
 import { migrate } from "./db/migrate.js";
-import { seedDemo } from "./db/seed.js";
+import { seedDemo, seedDemoHistory } from "./db/seed.js";
 import { createLogger } from "./helpers/logger.js";
 
 const env = loadEnv();
@@ -12,7 +12,8 @@ const logger = createLogger(env.LOG_LEVEL);
 const database = await openDatabase({ url: env.DATABASE_URL, pgliteDir: env.PARI_PGLITE_DIR });
 const applied = await migrate(database);
 if (applied.length) logger.info({ applied }, "migrations applied");
-await seedDemo(database.db, env.PARI_API_KEY);
+const merchant = await seedDemo(database.db, env.PARI_API_KEY);
+if (env.PARI_DEMO_SEED && (await seedDemoHistory(database.db, merchant.id))) logger.info("seeded a few days of past entries");
 
 const ctx = createContext(env, logger, database);
 const app = createApp(ctx);
