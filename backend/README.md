@@ -62,11 +62,12 @@ Every `/api` route except the Paytm callback needs `x-api-key: <PARI_API_KEY>`. 
 | `GET /api/converse/state`, `POST /api/converse/reset` | Inspect or reset the session |
 | `GET /api/events` | SSE: `pari.ready`, `pari.entry.updated`, `pari.payment.received`, `pari.payment.suggested`, `pari.prompt`, `pari.announce` |
 | `POST /api/voice/entry` | Stateless: audio or text in, an `UNCONFIRMED` entry and read-back out |
-| `GET /api/entries`, `GET` or `PATCH /api/entries/:id` | List, read, or correct an entry |
+| `GET /api/me` | The shop for this API key: `{ id, name, upiId, qrPayload }`. `qrPayload` is a UPI payment intent when `PARI_UPI_ID` is set |
+| `GET /api/entries`, `GET` or `PATCH /api/entries/:id` | List, read, or correct an entry. Reads include the latest payment `link` and the matched `payments` |
 | `POST /api/entries/:id/confirm` | `{ answer: "yes" \| "no" }`, or a spoken answer as audio |
 | `POST /api/entries/:id/collect` | `{ phone? }`. Sends the payment link |
 | `GET /api/customers`, `GET /api/customers/:id/balance` | Customers and what they owe |
-| `GET /api/payments/suggestions`, `POST /api/payments/:id/match` | Pending QR matches. Body is `{ entryId }` or `{ reject: true }` |
+| `GET /api/payments/suggestions`, `POST /api/payments/:id/match` | Pending QR matches. Body is `{ entryId }` or `{ reject: true }`. Settling a payment here also drops Pari's spoken question about it |
 | `POST /api/stt`, `POST /api/tts` | Raw Saaras and Bulbul |
 | `GET /api/tts/stream?text=` | Bulbul WAV streamed as it is generated (first audio in ~0.5 s) |
 | `POST /api/paytm/callback` | Paytm status callback (checksum verified, no API key) |

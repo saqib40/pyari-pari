@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ledgerKeys } from '@/features/ledger/use-ledger';
+import { settleByTap } from '@/features/listening/conversation-store';
+import { toLedgerEntry } from '@/services/ledger-service';
 import { dismissQrPayment, fetchQrPayments, matchQrPayment } from '@/services/payments-service';
 
 export const qrPaymentKeys = {
@@ -23,14 +25,14 @@ type Resolution = {
 export function useResolveQrPayment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ paymentId, entryId }: Resolution) => {
-      if (entryId) await matchQrPayment(paymentId, entryId);
-      else await dismissQrPayment(paymentId);
-    },
-    onSuccess: () =>
-      Promise.all([
+    mutationFn: ({ paymentId, entryId }: Resolution) =>
+      entryId ? matchQrPayment(paymentId, entryId) : dismissQrPayment(paymentId),
+    onSuccess: async ({ line, entry }) => {
+      await Promise.all([
         queryClient.invalidateQueries({ queryKey: qrPaymentKeys.all }),
         queryClient.invalidateQueries({ queryKey: ledgerKeys.all }),
-      ]),
+      ]);
+      await settleByTap(line, entry && toLedgerEntry(entry)).catch(() => {});
+    },
   });
 }

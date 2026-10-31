@@ -10,9 +10,11 @@ const EnvSchema = z.object({
   LOG_LEVEL: stringWithDefault("info"),
 
   PARI_API_KEY: z.preprocess(emptyToUndefined, z.string().min(8).default("pari-dev-key")),
-  PARI_CORS_ORIGINS: stringWithDefault("http://localhost:5173"),
+  PARI_CORS_ORIGINS: stringWithDefault("http://localhost:5173,http://localhost:8081"),
   PARI_API_URL: stringWithDefault("http://localhost:4000"),
   PARI_PUBLIC_URL: optionalString,
+  PARI_UPI_ID: z.preprocess(emptyToUndefined, z.string().regex(/^[\w.-]+@[a-zA-Z]+$/, "must look like name@bank").optional()),
+  PARI_DEMO_SEED: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
 
   DATABASE_URL: optionalString,
   PARI_PGLITE_DIR: stringWithDefault(".data/pglite"),

@@ -149,6 +149,38 @@ describe("Pari conversation (deck flow)", () => {
     });
   });
 
+  it("a QR question settled by tap is not asked again by voice", async () => {
+    await say(DECK);
+    await say("haan");
+    await say("nahi");
+    const qr = await request(t.app).post("/api/dev/simulate/qr").set(auth).send({ amountRupees: 150 }).expect(201);
+    await new Promise((r) => setTimeout(r, 50));
+    const state = () => request(t.app).get("/api/converse/state").set(auth).expect(200);
+    expect((await state()).body.state).toBe("AWAITING_QR_MATCH");
+
+    const { payment, candidates } = qr.body.suggestion;
+    await request(t.app).post(`/api/payments/${payment.id}/match`).set(auth).send({ entryId: candidates[0].entry.id }).expect(200);
+    expect((await state()).body.state).toBe("IDLE");
+
+    const turn = await say("haan");
+    expect(turn.state).toBe("IDLE");
+    expect(turn.reply.text).toContain("Aise boliye");
+  });
+
+  it("a tap on a different payment leaves the spoken question in place", async () => {
+    await say(DECK);
+    await say("haan");
+    await say("nahi");
+    const asked = await request(t.app).post("/api/dev/simulate/qr").set(auth).send({ amountRupees: 150 }).expect(201);
+    await new Promise((r) => setTimeout(r, 50));
+    const other = await request(t.app).post("/api/dev/simulate/qr").set(auth).send({ amountRupees: 100 }).expect(201);
+    expect(other.body.suggestion.payment.id).not.toBe(asked.body.suggestion.payment.id);
+
+    await request(t.app).post(`/api/payments/${other.body.suggestion.payment.id}/match`).set(auth).send({ reject: true }).expect(200);
+    const turn = await say("haan");
+    expect(turn).toMatchObject({ state: "IDLE", entry: { status: "CLOSED" } });
+  });
+
   it("QR that arrives mid-conversation is asked right after the current flow ends", async () => {
     await say("Sunita didi 150 baaki");
     await say("haan");

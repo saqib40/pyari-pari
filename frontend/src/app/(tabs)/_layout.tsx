@@ -2,12 +2,12 @@ import { Tabs } from 'expo-router/js-tabs';
 
 import { TabBar } from '@/components/navigation/tab-bar';
 import { Icon } from '@/components/ui/icon';
-import { usePaymentEvents } from '@/features/ledger/use-payment-events';
+import { usePariEvents } from '@/features/listening/use-pari-events';
 import { useQrPayments } from '@/features/qr/use-qr-payments';
 import { colors } from '@/theme';
 
 export default function TabsLayout() {
-  usePaymentEvents();
+  usePariEvents();
   const toMatch = useQrPayments().data?.length ?? 0;
 
   return (

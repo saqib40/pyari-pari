@@ -36,14 +36,15 @@ export function PaymentMatchCard({ payment, waiting }: PaymentMatchCardProps) {
 
   const dismiss = () => resolve.mutate({ paymentId: payment.id });
 
-  const meta = [`On your QR · ${formatTime(payment.receivedAt)}`, waiting > 0 ? `${waiting} more waiting` : null]
+  const via = payment.source === 'link' ? 'More than the link asked' : 'On your QR';
+  const meta = [`${via} · ${formatTime(payment.receivedAt)}`, waiting > 0 ? `${waiting} more waiting` : null]
     .filter(Boolean)
     .join(' · ');
 
   return (
     <View style={styles.card}>
       <View style={styles.meta}>
-        <Icon name="qr" size={13} color={colors.accentText} />
+        <Icon name={payment.source === 'link' ? 'link' : 'qr'} size={13} color={colors.accentText} />
         <AppText variant="caption" numberOfLines={1}>
           {meta}
         </AppText>

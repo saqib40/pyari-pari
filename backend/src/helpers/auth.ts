@@ -35,7 +35,11 @@ export function requireMerchant(db: Db): RequestHandler {
   };
 }
 
-export function merchantId(req: Request): string {
+export function currentMerchant(req: Request): Merchant {
   if (!req.merchant) throw new AppError(401, "UNAUTHORIZED", "Not authenticated");
-  return req.merchant.id;
+  return req.merchant;
+}
+
+export function merchantId(req: Request): string {
+  return currentMerchant(req).id;
 }

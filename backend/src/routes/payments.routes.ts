@@ -17,6 +17,7 @@ export function paymentsRoutes(ctx: AppContext): Router {
       "entryId" in body
         ? await ctx.reconciler.matchPayment(mid, req.params.id, body.entryId)
         : await ctx.reconciler.dismissPayment(mid, req.params.id, "REJECTED");
+    await ctx.conversation.releasePayment(mid, result.payment.id);
     res.json(result);
   });
 

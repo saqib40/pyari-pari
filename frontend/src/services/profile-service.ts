@@ -1,12 +1,9 @@
-import { env } from '@/config/env';
-import { mockDb, mockLatency } from '@/mocks/db';
+import type { MerchantDto } from '@/types/api';
 import type { Profile } from '@/types/profile';
 
 import { api } from './api-client';
 
 export async function fetchProfile(signal?: AbortSignal): Promise<Profile> {
-  if (env.useMocks) {
-    return mockLatency(mockDb.profile(), 300);
-  }
-  return api.get<Profile>('/me', signal);
+  const me = await api.get<MerchantDto>('/me', signal);
+  return { id: me.id, businessName: me.name, paymentAddress: me.upiId, qrPayload: me.qrPayload };
 }

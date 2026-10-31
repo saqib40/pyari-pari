@@ -1,6 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { useEffect, useState } from 'react';
-import { Share, StyleSheet, View } from 'react-native';
+import { Pressable, Share, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOutDown, ZoomIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -9,7 +10,11 @@ import { SkyOrb } from '@/components/sky/sky-orb';
 import { AppText } from '@/components/ui/app-text';
 import { PillButton } from '@/components/ui/pill-button';
 import { ScreenHeader } from '@/components/ui/screen-header';
+import { env } from '@/config/env';
+import { useLedgerEntries } from '@/features/ledger/use-ledger';
 import { useContentWidth } from '@/lib/use-content-width';
+import { simulateQrPayment } from '@/services/demo-service';
+import type { LedgerEntry } from '@/types/ledger';
 import type { Profile } from '@/types/profile';
 import { colors, screenPadding, spacing } from '@/theme';
 
@@ -58,18 +63,37 @@ export function QrScreen() {
   );
 }
 
+/** What the newest open entry still owes, the payment a demo customer would make. In paise. */
+function newestPending(entries: LedgerEntry[] = []) {
+  return entries
+    .filter((entry) => entry.status === 'open' && entry.pending > 0)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]?.pending;
+}
+
 /** `covered` while a payment match card sits over the footer. */
 function MyCode({ size, covered }: { size: number; covered: boolean }) {
   const { data: profile, isError, refetch } = useProfile();
+  const { data: entries } = useLedgerEntries();
   const cardSize = Math.round(size * 0.6);
+
+  // Demo only: a customer scans the code and pays, and Pari asks whose payment it is.
+  const pending = env.demoTools ? newestPending(entries) : undefined;
+  const payQr = pending
+    ? () => {
+        if (process.env.EXPO_OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        simulateQrPayment(pending / 100).catch(() => {});
+      }
+    : undefined;
 
   return (
     <View style={styles.centered}>
       <SkyOrb size={size} glow={0.16}>
         {profile ? (
-          <Animated.View entering={ZoomIn.duration(400)} style={[styles.card, cardStyle(cardSize)]}>
-            <QrCode value={profile.qrPayload} size={Math.round(cardSize * 0.8)} />
-          </Animated.View>
+          <Pressable onLongPress={payQr} disabled={!payQr}>
+            <Animated.View entering={ZoomIn.duration(400)} style={[styles.card, cardStyle(cardSize)]}>
+              <QrCode value={profile.qrPayload} size={Math.round(cardSize * 0.8)} />
+            </Animated.View>
+          </Pressable>
         ) : null}
       </SkyOrb>
 
@@ -100,14 +124,16 @@ function Identity({ profile }: { profile?: Profile }) {
     return () => clearTimeout(timer);
   }, [copied]);
 
+  const address = profile?.paymentAddress;
+
   const copy = async () => {
-    if (!profile) return;
-    await Clipboard.setStringAsync(profile.paymentAddress);
+    if (!address) return;
+    await Clipboard.setStringAsync(address);
     setCopied(true);
   };
 
   const share = () => {
-    if (!profile) return;
+    if (!profile || !address) return;
     void Share.share({ message: `Pay ${profile.businessName} with Pyari Pari: ${profile.qrPayload}` });
   };
 
@@ -118,18 +144,20 @@ function Identity({ profile }: { profile?: Profile }) {
           {profile?.businessName ?? ' '}
         </AppText>
         <AppText variant="caption" align="center">
-          {profile?.paymentAddress ?? ' '}
+          {address ?? ' '}
         </AppText>
       </View>
-      <View style={styles.actions}>
-        <PillButton
-          icon={copied ? 'check' : 'copy'}
-          label={copied ? 'Copied' : 'Copy ID'}
-          onPress={() => void copy()}
-          disabled={!profile}
-        />
-        <PillButton icon="share" label="Share" onPress={share} disabled={!profile} />
-      </View>
+      {profile && !address ? null : (
+        <View style={styles.actions}>
+          <PillButton
+            icon={copied ? 'check' : 'copy'}
+            label={copied ? 'Copied' : 'Copy ID'}
+            onPress={() => void copy()}
+            disabled={!address}
+          />
+          <PillButton icon="share" label="Share" onPress={share} disabled={!address} />
+        </View>
+      )}
     </View>
   );
 }

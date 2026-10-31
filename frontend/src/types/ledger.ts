@@ -1,10 +1,12 @@
 /**
- * `unconfirmed` entries are drafts read back to the merchant and never appear in the ledger.
- * An entry is `open` while something is still owed and `closed` once it is paid off.
+ * `unconfirmed` entries are drafts read back to the merchant and never appear in the ledger,
+ * and neither do `rejected` ones. An entry is `open` while something is still owed and
+ * `closed` once it is paid off.
  */
-export type EntryStatus = 'unconfirmed' | 'open' | 'closed';
+export type EntryStatus = 'unconfirmed' | 'open' | 'closed' | 'rejected';
 
-export type PaymentMethod = 'cash' | 'upi' | 'link' | 'qr';
+/** `counter` is what was paid when the entry was spoken, in cash or UPI. */
+export type PaymentMethod = 'counter' | 'link' | 'qr';
 
 export type Customer = {
   id: string;
@@ -22,10 +24,10 @@ export type Payment = {
 };
 
 export type PaymentLink = {
-  /** Order reference the payment callback is matched on. */
-  orderId: string;
   /** Paise. */
   amount: number;
+  /** Ten digits the link was texted to. */
+  phone: string;
   status: 'sent' | 'paid';
   /** ISO-8601 timestamp. */
   sentAt: string;
@@ -39,6 +41,8 @@ export type LedgerEntry = {
   paid: number;
   pending: number;
   status: EntryStatus;
+  /** The amounts weren't heard clearly, so the read-back asks the merchant to listen carefully. */
+  needsReview: boolean;
   payments: Payment[];
   link?: PaymentLink;
   /** ISO-8601 timestamps. */
