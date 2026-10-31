@@ -26,6 +26,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     signal,
     headers: {
       Accept: 'application/json',
+      'x-api-key': process.env.EXPO_PUBLIC_API_KEY ?? 'pari-dev-key',
       ...(body === undefined ? null : { 'Content-Type': 'application/json' }),
       ...headers,
     },
